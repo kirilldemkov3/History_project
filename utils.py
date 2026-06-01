@@ -1,121 +1,87 @@
 """
-Вспомогательные функции для работы с Google Sheets
+Вспомогательные функции для работы с SQLite базой данных
 """
 
-import os
-import gspread
-from dotenv import load_dotenv
-from google.oauth2.service_account import Credentials
+import sqlite3
 import datetime
 import random
+from database import get_connection, init_db
 
-# Загружаем переменные из .env
-load_dotenv()
-
-# ========== НАСТРОЙКИ ДОСТУПА ==========
-SCOPE = [
-    "https://spreadsheets.google.com/feeds",
-    "https://www.googleapis.com/auth/spreadsheets",
-    "https://www.googleapis.com/auth/drive"
-]
-
-# Путь к credentials.json (из .env)
-CREDS_FILE = os.getenv("GOOGLE_CREDS_PATH", "credentials.json")
-
-# Название таблицы (из .env)
-SHEET_NAME = os.getenv("SPREADSHEET_NAME", "Научный календарь")
-
-# ... остальные функции без изменений
-
-# ========== ФУНКЦИЯ ПОДКЛЮЧЕНИЯ ==========
-
-def get_client():
-    """
-    Создаёт и возвращает клиент для работы с Google Sheets
-    """
-    if not os.path.exists(CREDS_FILE):
-        print(f"❌ Файл {CREDS_FILE} не найден в папке {os.getcwd()}")
-        raise FileNotFoundError(f"Файл {CREDS_FILE} не найден")
-    
-    creds = Credentials.from_service_account_file(CREDS_FILE, scopes=SCOPE)
-    client = gspread.authorize(creds)
-    print("✅ Подключение к Google Sheets установлено")
-    return client
+# Инициализируем БД при первом импорте
+init_db()
 
 
 # ========== ФУНКЦИИ ДЛЯ РАБОТЫ С СОБЫТИЯМИ ==========
 
 def get_today_event():
     """
-    Получает событие для сегодняшней даты из листа 'События'
+    Получает событие для сегодняшней даты
     """
     try:
-        # Получаем сегодняшний день и месяц
         today_str = datetime.datetime.now().strftime("%d.%m")
         print(f"🔍 Ищем дату, начинающуюся с: {today_str}")
         
-        client = get_client()
-        spreadsheet = client.open(SHEET_NAME)
-        sheet = spreadsheet.worksheet("События")
+        conn = get_connection()
+        cursor = conn.cursor()
         
-        records = sheet.get_all_records()
-        print(f"📊 Всего записей в 'События': {len(records)}")
+        cursor.execute('''
+            SELECT title, inventor, year, description, date
+            FROM events 
+            WHERE date LIKE ?
+            LIMIT 1
+        ''', (today_str + '%',))
         
-        for record in records:
-            date_str = str(record.get("Дата", ""))
-            if date_str.startswith(today_str):
-                print(f"✅ Найдено совпадение: {date_str}")
-                
-                # Извлекаем год, если есть
-                year = record.get("Год", "")
-                if not year:
-                    parts = date_str.split('.')
-                    if len(parts) >= 3:
-                        year = parts[2]
-                
-                return {
-                    "title": record.get("Изобретение", "Неизвестно"),
-                    "inventor": record.get("Изобретатель", "Неизвестен"),
-                    "year": str(year) if year else "?",
-                    "description": record.get("Описание", "")
-                }
+        row = cursor.fetchone()
+        conn.close()
+        
+        if row:
+            print(f"✅ Найдено совпадение: {row['date']}")
+            return {
+                "title": row["title"],
+                "inventor": row["inventor"] if row["inventor"] else "Неизвестен",
+                "year": str(row["year"]) if row["year"] else "?",
+                "description": row["description"] if row["description"] else ""
+            }
         
         print(f"⚠️ Запись для даты {today_str} не найдена")
-        return None  # Возвращаем None, если не нашли
+        return None
         
     except Exception as e:
         print(f"❌ Ошибка в get_today_event: {e}")
-        import traceback
-        traceback.print_exc()
         return None
 
 
 def get_random_event():
     """
-    Возвращает случайное событие из листа 'События'
+    Возвращает случайное событие из базы
     """
     try:
-        client = get_client()
-        spreadsheet = client.open(SHEET_NAME)
-        sheet = spreadsheet.worksheet("События")
+        conn = get_connection()
+        cursor = conn.cursor()
         
-        records = sheet.get_all_records()
+        cursor.execute('''
+            SELECT title, inventor, year, description
+            FROM events 
+            ORDER BY RANDOM() 
+            LIMIT 1
+        ''')
         
-        if not records:
+        row = cursor.fetchone()
+        conn.close()
+        
+        if row:
             return {
-                "title": "Нет данных",
-                "inventor": "Неизвестен",
-                "year": "?",
-                "description": "Заполните базу знаний!"
+                "title": row["title"],
+                "inventor": row["inventor"] if row["inventor"] else "Неизвестен",
+                "year": str(row["year"]) if row["year"] else "?",
+                "description": row["description"] if row["description"] else ""
             }
         
-        event = random.choice(records)
-        
         return {
-            "title": event.get("Изобретение", "Неизвестно"),
-            "inventor": event.get("Изобретатель", "Неизвестен"),
-            "year": str(event.get("Год", "?")),
-            "description": event.get("Описание", "")
+            "title": "Нет данных",
+            "inventor": "Неизвестен",
+            "year": "?",
+            "description": "Добавьте события в базу данных!"
         }
         
     except Exception as e:
@@ -130,40 +96,84 @@ def get_random_event():
 
 # ========== ФУНКЦИИ ДЛЯ ВИКТОРИНЫ ==========
 
+def get_random_quiz():
+    """
+    Возвращает случайный вопрос из таблицы викторин
+    """
+    try:
+        conn = get_connection()
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            SELECT id, question, correct, option2, option3, option4
+            FROM quizzes 
+            ORDER BY RANDOM() 
+            LIMIT 1
+        ''')
+        
+        row = cursor.fetchone()
+        conn.close()
+        
+        if not row:
+            print("⚠️ Вопросы не найдены")
+            return None
+        
+        # Собираем варианты ответов
+        options = [row["correct"]]
+        if row["option2"]:
+            options.append(row["option2"])
+        if row["option3"]:
+            options.append(row["option3"])
+        if row["option4"]:
+            options.append(row["option4"])
+        
+        random.shuffle(options)
+        
+        return {
+            "id": row["id"],
+            "question": row["question"],
+            "options": options,
+            "correct": row["correct"]
+        }
+        
+    except Exception as e:
+        print(f"❌ Ошибка в get_random_quiz: {e}")
+        return None
+
+
 def get_quiz_for_today():
     """
-    Получает вопрос для викторины из листа 'Викторины'
+    Получает вопрос для викторины по сегодняшней дате
     """
     try:
         today_str = datetime.datetime.now().strftime("%d.%m")
         
-        client = get_client()
-        spreadsheet = client.open(SHEET_NAME)
-        sheet = spreadsheet.worksheet("Викторины")
+        conn = get_connection()
+        cursor = conn.cursor()
         
-        records = sheet.get_all_records()
+        cursor.execute('''
+            SELECT id, question, correct, option2, option3, option4
+            FROM quizzes 
+            WHERE date LIKE ?
+            LIMIT 1
+        ''', (today_str + '%',))
         
-        for record in records:
-            date_str = str(record.get("Дата", ""))
-            if date_str.startswith(today_str):
-                options = [
-                    record.get("Правильный ответ"),
-                    record.get("Вариант 2"),
-                    record.get("Вариант 3"),
-                    record.get("Вариант 4")
-                ]
-                # Убираем пустые варианты
-                options = [opt for opt in options if opt]
-                random.shuffle(options)
-                
-                return {
-                    "question": record.get("Вопрос"),
-                    "options": options,
-                    "correct": record.get("Правильный ответ"),
-                    "id": record.get("ID", 1)
-                }
+        row = cursor.fetchone()
+        conn.close()
         
-        return None
+        if not row:
+            return None
+        
+        options = [row["correct"], row["option2"], row["option3"], row["option4"]]
+        options = [opt for opt in options if opt]
+        random.shuffle(options)
+        
+        return {
+            "id": row["id"],
+            "question": row["question"],
+            "options": options,
+            "correct": row["correct"]
+        }
         
     except Exception as e:
         print(f"❌ Ошибка в get_quiz_for_today: {e}")
@@ -172,158 +182,56 @@ def get_quiz_for_today():
 
 # ========== ФУНКЦИИ ДЛЯ СТАТИСТИКИ ПОЛЬЗОВАТЕЛЕЙ ==========
 
-def update_user_score(user_id: int, is_correct: bool, username: str = None, first_name: str = None):
-    """
-    Обновляет статистику пользователя после викторины
-    """
-    try:
-        client = get_client()
-        spreadsheet = client.open(SHEET_NAME)
-        sheet = spreadsheet.worksheet("Пользователи")
-        
-        # Получаем все user_id из первой колонки
-        user_ids = sheet.col_values(1)
-        now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        
-        print(f"📊 Обновление статистики для user_id: {user_id}")
-        print(f"   Правильный ответ: {is_correct}")
-        
-        try:
-            # Ищем пользователя
-            row_index = user_ids.index(str(user_id)) + 1
-            print(f"   Найден в строке {row_index}")
-            
-            # Читаем текущие значения
-            row = sheet.row_values(row_index)
-            print(f"   Текущие значения: {row}")
-            
-            # Убеждаемся, что в строке достаточно колонок
-            while len(row) < 7:
-                row.append("0")
-            
-            correct = int(row[3]) if row[3] and row[3].isdigit() else 0
-            total = int(row[4]) if row[4] and row[4].isdigit() else 0
-            
-            # Обновляем
-            if is_correct:
-                correct += 1
-            total += 1
-            
-            print(f"   Новые значения: correct={correct}, total={total}")
-            
-            # Обновляем username и first_name если они есть
-            if username:
-                sheet.update_cell(row_index, 2, username)  # колонка B = username
-            if first_name:
-                sheet.update_cell(row_index, 3, first_name)  # колонка C = first_name
-            
-            # Обновляем статистику
-            sheet.update_cell(row_index, 4, correct)  # колонка D = correct_answers
-            sheet.update_cell(row_index, 5, total)    # колонка E = total_answers
-            sheet.update_cell(row_index, 6, now)      # колонка F = last_active
-            
-            print(f"✅ Статистика обновлена!")
-            
-        except ValueError as e:
-            print(f"⚠️ Пользователь {user_id} не найден в таблице: {e}")
-            # Создаём нового пользователя
-            now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            new_row = [
-                str(user_id),
-                username or "",
-                first_name or "",
-                "1" if is_correct else "0",
-                "1",
-                now,
-                now
-            ]
-            sheet.append_row(new_row)
-            print(f"✅ Создан новый пользователь {user_id} с именем {username}")
-            
-    except Exception as e:
-        print(f"❌ Ошибка в update_user_score: {e}")
-        import traceback
-        traceback.print_exc()
-
-
 def get_user_stats(user_id: int, username: str = None, first_name: str = None):
     """
-    Получает статистику пользователя из листа 'Пользователи'
+    Получает статистику пользователя
     """
     try:
-        client = get_client()
-        spreadsheet = client.open(SHEET_NAME)
+        conn = get_connection()
+        cursor = conn.cursor()
         
-        try:
-            sheet = spreadsheet.worksheet("Пользователи")
-        except gspread.WorksheetNotFound:
-            # Создаём лист, если его нет
-            sheet = spreadsheet.add_worksheet(title="Пользователи", rows=1000, cols=7)
-            sheet.append_row(['user_id', 'username', 'first_name', 'correct_answers', 'total_answers', 'last_active', 'registered_at'])
-            print("✅ Создан новый лист 'Пользователи'")
+        cursor.execute('''
+            SELECT username, first_name, correct_answers, total_answers
+            FROM users 
+            WHERE user_id = ?
+        ''', (user_id,))
         
-        # Получаем все user_id
-        user_ids = sheet.col_values(1)
+        row = cursor.fetchone()
         
-        try:
-            row_index = user_ids.index(str(user_id)) + 1
-            row = sheet.row_values(row_index)
-            
-            # Убеждаемся, что в строке достаточно колонок
-            while len(row) < 7:
-                row.append("0")
-            
-            correct = int(row[3]) if row[3] and row[3].isdigit() else 0
-            total = int(row[4]) if row[4] and row[4].isdigit() else 0
-            
-            # Если в таблице нет username, но он передан в функцию - обновляем
-            current_username = row[1] if len(row) > 1 and row[1] else ""
-            if not current_username and username:
-                sheet.update_cell(row_index, 2, username)
-                current_username = username
-            
-            current_first_name = row[2] if len(row) > 2 and row[2] else ""
-            if not current_first_name and first_name:
-                sheet.update_cell(row_index, 3, first_name)
-                current_first_name = first_name
+        if row:
+            correct = row["correct_answers"] or 0
+            total = row["total_answers"] or 0
             
             stats = {
-                "username": current_username if current_username else (username or "Гость"),
-                "first_name": current_first_name,
+                "username": row["username"] if row["username"] else (username or "Гость"),
+                "first_name": row["first_name"] if row["first_name"] else (first_name or ""),
                 "correct": correct,
                 "total": total,
                 "accuracy": round(correct / total * 100, 1) if total > 0 else 0
             }
-            print(f"📊 Статистика для {user_id}: {stats}")
-            return stats
-            
-        except ValueError:
-            # Новый пользователь — создаём запись
+        else:
+            # Новый пользователь
             now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            new_row = [
-                str(user_id),
-                username or "",
-                first_name or "",
-                "0",
-                "0",
-                now,
-                now
-            ]
-            sheet.append_row(new_row)
-            print(f"✅ Создана новая запись для пользователя {user_id} (username: {username})")
+            cursor.execute('''
+                INSERT INTO users (user_id, username, first_name, correct_answers, total_answers, last_active, registered_at)
+                VALUES (?, ?, ?, 0, 0, ?, ?)
+            ''', (user_id, username or "", first_name or "", now, now))
+            conn.commit()
             
-            return {
+            stats = {
                 "username": username or "Гость",
                 "first_name": first_name or "",
                 "correct": 0,
                 "total": 0,
                 "accuracy": 0
             }
-            
+        
+        conn.close()
+        print(f"📊 Статистика для {user_id}: {stats}")
+        return stats
+        
     except Exception as e:
         print(f"❌ Ошибка в get_user_stats: {e}")
-        import traceback
-        traceback.print_exc()
         return {
             "username": username or "Гость",
             "first_name": first_name or "",
@@ -331,33 +239,101 @@ def get_user_stats(user_id: int, username: str = None, first_name: str = None):
             "total": 0,
             "accuracy": 0
         }
+
+
+def update_user_score(user_id: int, is_correct: bool, username: str = None, first_name: str = None):
+    """
+    Обновляет статистику пользователя после викторины
+    """
+    try:
+        conn = get_connection()
+        cursor = conn.cursor()
         
+        now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         
+        # Проверяем, существует ли пользователь
+        cursor.execute("SELECT user_id FROM users WHERE user_id = ?", (user_id,))
+        exists = cursor.fetchone()
+        
+        if exists:
+            # Обновляем существующего
+            if is_correct:
+                cursor.execute('''
+                    UPDATE users 
+                    SET correct_answers = correct_answers + 1,
+                        total_answers = total_answers + 1,
+                        last_active = ?
+                    WHERE user_id = ?
+                ''', (now, user_id))
+            else:
+                cursor.execute('''
+                    UPDATE users 
+                    SET total_answers = total_answers + 1,
+                        last_active = ?
+                    WHERE user_id = ?
+                ''', (now, user_id))
+            
+            # Обновляем имя, если оно пустое
+            if username:
+                cursor.execute('''
+                    UPDATE users 
+                    SET username = COALESCE(username, ?)
+                    WHERE user_id = ? AND (username IS NULL OR username = '')
+                ''', (username, user_id))
+            if first_name:
+                cursor.execute('''
+                    UPDATE users 
+                    SET first_name = COALESCE(first_name, ?)
+                    WHERE user_id = ? AND (first_name IS NULL OR first_name = '')
+                ''', (first_name, user_id))
+        else:
+            # Создаём нового пользователя
+            cursor.execute('''
+                INSERT INTO users (user_id, username, first_name, correct_answers, total_answers, last_active, registered_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            ''', (
+                user_id,
+                username or "",
+                first_name or "",
+                1 if is_correct else 0,
+                1,
+                now,
+                now
+            ))
+        
+        conn.commit()
+        conn.close()
+        print(f"✅ Статистика обновлена для {user_id}: +{'1' if is_correct else '0'} правильных")
+        
+    except Exception as e:
+        print(f"❌ Ошибка в update_user_score: {e}")
+
+
 def get_top_users(limit: int = 10):
-    
-    
     """
     Получает топ пользователей по правильным ответам
     """
     try:
-        client = get_client()
-        spreadsheet = client.open(SHEET_NAME)
-        sheet = spreadsheet.worksheet("Пользователи")
+        conn = get_connection()
+        cursor = conn.cursor()
         
-        records = sheet.get_all_records()
+        cursor.execute('''
+            SELECT username, correct_answers as correct, total_answers as total
+            FROM users 
+            WHERE total_answers > 0
+            ORDER BY correct_answers DESC
+            LIMIT ?
+        ''', (limit,))
         
-        sorted_users = sorted(
-            records,
-            key=lambda x: int(x.get("correct_answers", 0)),
-            reverse=True
-        )
+        rows = cursor.fetchall()
+        conn.close()
         
         result = []
-        for user in sorted_users[:limit]:
-            correct = int(user.get("correct_answers", 0))
-            total = int(user.get("total_answers", 0))
+        for row in rows:
+            correct = row["correct"] or 0
+            total = row["total"] or 0
             result.append({
-                "username": user.get("username", "Аноним"),
+                "username": row["username"] if row["username"] else "Аноним",
                 "correct": correct,
                 "total": total,
                 "accuracy": round(correct / total * 100, 1) if total > 0 else 0
@@ -368,95 +344,21 @@ def get_top_users(limit: int = 10):
     except Exception as e:
         print(f"❌ Ошибка в get_top_users: {e}")
         return []
-    
-    
-    
-def get_random_quiz():
-    """
-    Возвращает случайный вопрос из листа 'Викторины'
-    """
-    try:
-        client = get_client()
-        spreadsheet = client.open(SHEET_NAME)
-        
-        # Проверяем, существует ли лист "Викторины"
-        try:
-            sheet = spreadsheet.worksheet("Викторины")
-        except gspread.WorksheetNotFound:
-            print("⚠️ Лист 'Викторины' не найден")
-            return None
-        
-        records = sheet.get_all_records()
-        
-        if not records:
-            print("⚠️ Лист 'Викторины' пуст")
-            return None
-        
-        # Выбираем случайный вопрос
-        quiz = random.choice(records)
-        
-        # Собираем варианты ответов
-        options = [
-            quiz.get("Правильный ответ"),
-            quiz.get("Вариант 2"),
-            quiz.get("Вариант 3"),
-            quiz.get("Вариант 4")
-        ]
-        # Убираем пустые варианты
-        options = [opt for opt in options if opt]
-        
-        if len(options) < 2:
-            print(f"⚠️ Недостаточно вариантов для вопроса")
-            return None
-        
-        random.shuffle(options)
-        
-        return {
-            "question": quiz.get("Вопрос"),
-            "options": options,
-            "correct": quiz.get("Правильный ответ"),
-            "id": quiz.get("ID", random.randint(1, 1000))
-        }
-        
-    except Exception as e:
-        print(f"❌ Ошибка в get_random_quiz: {e}")
-        import traceback
-        traceback.print_exc()
-        return None
-    
-    
+
+
 def get_all_users():
     """
-    Получает список всех user_id из листа 'Пользователи'
+    Получает список всех user_id для рассылки
     """
     try:
-        client = get_client()
-        spreadsheet = client.open(SHEET_NAME)
+        conn = get_connection()
+        cursor = conn.cursor()
         
-        try:
-            sheet = spreadsheet.worksheet("Пользователи")
-        except gspread.WorksheetNotFound:
-            print("⚠️ Лист 'Пользователи' ещё не создан")
-            return []
+        cursor.execute("SELECT user_id FROM users")
+        rows = cursor.fetchall()
+        conn.close()
         
-        # Получаем все значения из колонки A (user_id)
-        user_ids = sheet.col_values(1)
-        
-        # Пропускаем заголовок
-        if user_ids and user_ids[0] == 'user_id':
-            user_ids = user_ids[1:]
-        
-        # Фильтруем пустые значения и конвертируем в int
-        result = []
-        for uid in user_ids:
-            if uid and uid.strip():
-                try:
-                    result.append(int(float(uid)))
-                except:
-                    pass
-        
-        print(f"📊 Найдено пользователей для рассылки: {len(result)}")
-        return result
+        return [row["user_id"] for row in rows]
         
     except Exception as e:
         print(f"❌ Ошибка в get_all_users: {e}")
