@@ -1,73 +1,67 @@
 """
-Все клавиатуры бота
+Точка входа — запуск бота
 """
 
-from telegram import ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardButton, InlineKeyboardMarkup
-# ========== REPLY-КЛАВИАТУРА (главное меню) ==========
-# Прикрепляется к полю ввода, всегда видна
+import os
+import datetime
+import logging
+from dotenv import load_dotenv
+from telegram import Update
+from telegram.ext import (
+    Application, CommandHandler, CallbackQueryHandler, 
+    MessageHandler, filters
+)
+from bot import (
+    start, help_command, today_event, random_event, 
+    my_rating, top_users, random_quiz, quiz_callback_handler,
+    handle_message, daily_broadcast
+)
 
-def get_main_menu():
-    """
-    Главное меню бота (reply-кнопки)
-    """
-    keyboard = [
-        ["📅 Сегодня в науке", "🎲 Случайное событие"],
-        ["❓ Случайная викторина", "📊 Мой рейтинг"],  # ← Новая кнопка
-        ["🏆 Топ пользователей", "ℹ️ Помощь"]
-    ]
-    return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
+# Загружаем переменные из .env
+load_dotenv()
 
+# ========== НАСТРОЙКА ЛОГИРОВАНИЯ ==========
+logging.basicConfig(
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    level=logging.INFO
+)
+logger = logging.getLogger(__name__)
 
-# ========== INLINE-КЛАВИАТУРЫ (внутри сообщений) ==========
+# Токен бота 
+TOKEN = os.getenv("BOT_TOKEN")
 
-def get_quiz_buttons(question_id: int = 1):
-    """
-    Кнопки для викторины (варианты ответов)
-    Возвращает InlineKeyboardMarkup с 4 вариантами
-    """
-    # Временно заглушка — позже будем брать из БД
-    quiz_data = {
-        1: {
-            "question": "Кто изобрел телефон?",
-            "options": ["Александр Попов", "Томас Эдисон", "Александр Белл", "Никола Тесла"],
-            "correct": "Александр Белл"
-        }
-    }
+def main():
+    if not TOKEN:
+        logger.error("❌ BOT_TOKEN не найден в .env файле!")
+        return
     
-    data = quiz_data.get(question_id, quiz_data[1])
-    options = data["options"]
+    logger.info("🚀 Запуск бота 'Научный календарь'...")
     
-    keyboard = [
-        [InlineKeyboardButton(options[0], callback_data=f"quiz_{question_id}_0")],
-        [InlineKeyboardButton(options[1], callback_data=f"quiz_{question_id}_1")],
-        [InlineKeyboardButton(options[2], callback_data=f"quiz_{question_id}_2")],
-        [InlineKeyboardButton(options[3], callback_data=f"quiz_{question_id}_3")],
-    ]
+    app = Application.builder().token(TOKEN).build()
     
-    # Добавляем кнопку "Выход"
-    keyboard.append([InlineKeyboardButton("❌ Закончить викторину", callback_data="quiz_exit")])
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("help", help_command))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    app.add_handler(CallbackQueryHandler(quiz_callback_handler))
     
-    return InlineKeyboardMarkup(keyboard), data["correct"]
+    job_queue = app.job_queue
+    
+    if job_queue:
+        target_time = datetime.time(hour=9, minute=0, second=0)
+        job_queue.run_daily(
+            daily_broadcast,
+            time=target_time,
+            days=tuple(range(7))
+        )
+        logger.info("✅ Ежедневная рассылка настроена на 9:00 утра")
+        # job_queue.run_once(daily_broadcast, when=30)
+        # logger.info("✅ Тестовая рассылка запланирована через 30 секунд")
+    else:
+        logger.warning("⚠️ JobQueue не доступна!")
+    
+    logger.info("✅ Бот готов к работе!")
+    app.run_polling(allowed_updates=["message", "callback_query"])
 
 
-def get_quiz_offer():
-    """
-    Кнопки "Да/Нет" после информации о событии
-    """
-    keyboard = [
-        [
-            InlineKeyboardButton("✅ Да, хочу проверить знания", callback_data="quiz_yes"),
-            InlineKeyboardButton("❌ Нет, в другой раз", callback_data="quiz_no")
-        ]
-    ]
-    return InlineKeyboardMarkup(keyboard)
-
-
-def get_back_to_menu():
-    """
-    Кнопка возврата в главное меню
-    """
-    keyboard = [
-        [InlineKeyboardButton("🏠 Вернуться в главное меню", callback_data="back_to_menu")]
-    ]
-    return InlineKeyboardMarkup(keyboard)
+if __name__ == "__main__":
+    main()
