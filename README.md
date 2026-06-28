@@ -36,10 +36,6 @@ graph LR
 
 ### 1. Клонировать репозиторий
 
-```bash
-git clone https://github.com/ваш_username/ScientificCalendarBot.git
-cd ScientificCalendarBot
-```
 
 ---
 
